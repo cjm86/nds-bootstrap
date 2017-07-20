@@ -26,6 +26,13 @@
 
 #include "sr_data_error.h"	// For showing an error screen
 
+#define READ_SIZE_ARM7 0x8000
+
+#define CACHE_ADRESS_START 0x02800000
+#define CACHE_ADRESS_END 0x02FF8000
+#define CACHE_ADRESS_SIZE 0x7F8000
+#define REG_MBK_CACHE_SIZE	0xFF
+
 static bool initialized = false;
 static bool initializedIRQ = false;
 static bool calledViaIPC = false;
@@ -33,10 +40,49 @@ extern vu32* volatile cardStruct;
 extern vu32* volatile cacheStruct;
 extern u32 fileCluster;
 extern u32 saveCluster;
+extern u32 needFlushDCCache;
 extern u32 sdk_version;
 vu32* volatile sharedAddr = (vu32*)0x027FFB08;
+extern volatile int (*readCachedRef)(u32*); // this pointer is not at the end of the table but at the handler pointer corresponding to the current irq
 static aFile romFile;
 static aFile savFile;
+
+static u32 cacheDescriptor [REG_MBK_CACHE_SIZE];
+static u32 cacheCounter [REG_MBK_CACHE_SIZE];
+static u32 accessCounter = 0;
+
+int allocateCacheSlot() {
+	int slot = 0;
+	int lowerCounter = accessCounter;
+	for(int i=0; i<REG_MBK_CACHE_SIZE; i++) {
+		if(cacheCounter[i]<=lowerCounter) {
+			lowerCounter = cacheCounter[i];
+			slot = i;
+			if(!lowerCounter) break;
+		}
+	}
+	return slot;
+}
+
+int getSlotForSector(u32 sector) {
+	for(int i=0; i<REG_MBK_CACHE_SIZE; i++) {
+		if(cacheDescriptor[i]==sector) {
+			return i;
+		}
+	}
+	return -1;
+}
+
+
+vu8* getCacheAddress(int slot) {
+	return (vu32*)(CACHE_ADRESS_START+slot*0x8000);
+}
+
+void updateDescriptor(int slot, u32 sector) {
+	cacheDescriptor[slot] = sector;
+	cacheCounter[slot] = accessCounter;
+}
+
 
 static bool timeoutRun = true;
 static int timeoutTimer = 0;
@@ -270,45 +316,172 @@ void runCardEngineCheck (void) {
 
 		if(*(vu32*)(0x027FFB14) == (vu32)0x025FFB08)
 		{
+			accessCounter++;
+
+			u8* cacheBuffer = (u8*)(cacheStruct + 8);
+			u32* cachePage = cacheStruct + 2;
 			u32 src = *(vu32*)(sharedAddr+2);
 			u32 dst = *(vu32*)(sharedAddr);
 			u32 len = *(vu32*)(sharedAddr+1);
 			u32 marker = *(vu32*)(sharedAddr+3);
 
-			#ifdef DEBUG
-			dbg_printf("\ncard read received v2\n");
+			u32 page = (src/512)*512;
 
-			if(calledViaIPC) {
-				dbg_printf("\ntriggered via IPC\n");
-			}
+			u32 sector = (src/READ_SIZE_ARM7)*READ_SIZE_ARM7;
 
-			dbg_printf("\nstr : \n");
-			dbg_hexa(cardStruct);
-			dbg_printf("\nsrc : \n");
-			dbg_hexa(src);
-			dbg_printf("\ndst : \n");
-			dbg_hexa(dst);
-			dbg_printf("\nlen : \n");
-			dbg_hexa(len);
-			dbg_printf("\nmarker : \n");
-			dbg_hexa(marker);
-			#endif
+			if(page == src && len > READ_SIZE_ARM7 && dst < 0x02700000 && dst > 0x02000000 && ((u32)dst)%4==0) {
+				// read directly at arm7 level
+				timeoutRun = false;	// If card read received, do not show error screen
 
-			timeoutRun = false;	// If card read received, do not show error screen
+				cacheFlush();
 
-			cardReadLED(true);    // When a file is loading, turn on LED for card read indicator
-			fileRead(dst,romFile,src,len);
-			cardReadLED(false);    // After loading is done, turn off LED for card read indicator
+				#ifdef DEBUG
+				dbg_printf("\ncard read received v2\n");
 
-			#ifdef DEBUG
-			dbg_printf("\nread \n");
-			if(is_aligned(dst,4) || is_aligned(len,4)) {
-				dbg_printf("\n aligned read : \n");
+				if(calledViaIPC) {
+					dbg_printf("\ntriggered via IPC\n");
+				}
+
+				dbg_printf("\nstr : \n");
+				dbg_hexa(cardStruct);
+				dbg_printf("\nsrc : \n");
+				dbg_hexa(src);
+				dbg_printf("\ndst : \n");
+				dbg_hexa(dst);
+				dbg_printf("\nlen : \n");
+				dbg_hexa(len);
+				dbg_printf("\nmarker : \n");
+				dbg_hexa(marker);
+				#endif
+
+				cardReadLED(true);    // When a file is loading, turn on LED for card read indicator
+				fileRead(dst,romFile,src,len);
+				cardReadLED(false);    // After loading is done, turn off LED for card read indicator
+
+				#ifdef DEBUG
+				dbg_printf("\nread \n");
+				if(is_aligned(dst,4) || is_aligned(len,4)) {
+					dbg_printf("\n aligned read : \n");
+				} else {
+					dbg_printf("\n misaligned read : \n");
+				}
+				#endif
 			} else {
-				dbg_printf("\n misaligned read : \n");
-			}
-			#endif
+				// read via the WRAM cache
+				while(len > 0) {
+					int slot = getSlotForSector(sector);
+					vu8* buffer = getCacheAddress(slot);
+					// read max 32k via the WRAM cache
+					if(slot==-1) {
+						slot = allocateCacheSlot();
 
+						buffer = getCacheAddress(slot);
+
+						if(needFlushDCCache) DC_FlushRange(buffer, READ_SIZE_ARM7);
+
+						#ifdef DEBUG
+						dbg_printf("\ncard read received v2\n");
+
+						if(calledViaIPC) {
+							dbg_printf("\ntriggered via IPC\n");
+						}
+
+						dbg_printf("\nstr : \n");
+						dbg_hexa(cardStruct);
+						dbg_printf("\nsrc : \n");
+						dbg_hexa(src);
+						dbg_printf("\ndst : \n");
+						dbg_hexa(dst);
+						dbg_printf("\nlen : \n");
+						dbg_hexa(len);
+						dbg_printf("\nmarker : \n");
+						dbg_hexa(marker);
+						#endif
+
+						timeoutRun = false;	// If card read received, do not show error screen
+
+						cardReadLED(true);    // When a file is loading, turn on LED for card read indicator
+						fileRead(buffer,romFile,sector,READ_SIZE_ARM7);
+						cardReadLED(false);    // After loading is done, turn off LED for card read indicator
+
+						#ifdef DEBUG
+						dbg_printf("\nread \n");
+						if(is_aligned(dst,4) || is_aligned(len,4)) {
+							dbg_printf("\n aligned read : \n");
+						} else {
+							dbg_printf("\n misaligned read : \n");
+						}
+						#endif
+					}
+
+					updateDescriptor(slot, sector);
+
+					u32 len2=len;
+					if((src - sector) + len2 > READ_SIZE_ARM7){
+						len2 = sector - src + READ_SIZE_ARM7;
+					}
+
+					if(len2 > 512) {
+						len2 -= src%4;
+						len2 -= len2 % 32;
+					}
+
+					if(len2 >= 512 && len2 % 32 == 0 && ((u32)dst)%4 == 0 && src%4 == 0) {
+						#ifdef DEBUG
+						// send a log command for debug purpose
+						// -------------------------------------
+						commandRead = 0x026ff800;
+
+						sharedAddr[0] = dst;
+						sharedAddr[1] = len2;
+						sharedAddr[2] = buffer+src-sector;
+						sharedAddr[3] = commandRead;
+
+						IPC_SendSync(0xEE24);
+
+						while(sharedAddr[3] != (vu32)0);
+						// -------------------------------------*/
+						#endif
+
+						// copy directly
+						fastCopy32(buffer+(src-sector),dst,len2);
+
+						// update cardi common
+						cardStruct[0] = src + len2;
+						cardStruct[1] = dst + len2;
+						cardStruct[2] = len - len2;
+					} else {
+						#ifdef DEBUG
+						// send a log command for debug purpose
+						// -------------------------------------
+						commandRead = 0x026ff800;
+
+						sharedAddr[0] = page;
+						sharedAddr[1] = len2;
+						sharedAddr[2] = buffer+page-sector;
+						sharedAddr[3] = commandRead;
+
+						IPC_SendSync(0xEE24);
+
+						while(sharedAddr[3] != (vu32)0);
+						// -------------------------------------*/
+						#endif
+
+						// read via the 512b ram cache
+						fastCopy32(buffer+(page-sector), cacheBuffer, 512);
+						*cachePage = page;
+						(*readCachedRef)(cacheStruct);
+					}
+					len = cardStruct[2];
+					if(len>0) {
+						src = cardStruct[0];
+						dst = cardStruct[1];
+						page = (src/512)*512;
+						sector = (src/READ_SIZE_ARM7)*READ_SIZE_ARM7;
+						accessCounter++;
+					}
+				}
+			}
 			*(vu32*)(0x027FFB14) = 0;
 		}
 		unlockMutex();

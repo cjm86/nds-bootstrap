@@ -105,6 +105,7 @@ loop_fastCopy32:
 
 card_engine_end:
 
+.global readCachedRef
 patches:
 .word	card_read_arm9
 .word	card_pull_out_arm9
@@ -116,6 +117,9 @@ patches:
 .word   cacheFlushRef
 .word   readCachedRef
 .word   arm7Functions
+.global needFlushDCCache
+needFlushDCCache:
+.word   0x0
 
 @---------------------------------------------------------------------------------
 card_read_arm9:
@@ -241,6 +245,8 @@ _blx_r3_stub2:
 card_pull:
 @---------------------------------------------------------------------------------
 	bx lr
+.global cacheFlush
+.type	cacheFlush STT_FUNC
 cacheFlush:
     stmfd   sp!, {r0-r11,lr}
 
@@ -287,6 +293,20 @@ DC_WaitWriteBufferEmpty:
     ldmfd   sp!, {r0-r11,lr}
     bx      lr
 	.pool
+
+.global DC_FlushRange
+.type	DC_FlushRange STT_FUNC
+DC_FlushRange:
+	MOV             R12, #0
+	ADD             R1, R1, R0
+	BIC             R0, R0, #0x1F
+loop_flush_range :
+	MCR             p15, 0, R12,c7,c10, 4
+	MCR             p15, 0, R0,c7,c14, 1
+	ADD             R0, R0, #0x20
+	CMP             R0, R1
+	BLT             loop_flush_range
+	BX              LR
 
 arm7Functions :
 .word    eepromProtect 
