@@ -428,19 +428,28 @@ void runCardEngineCheck (void) {
 
 					if(len2 >= 512 && len2 % 32 == 0 && ((u32)dst)%4 == 0 && src%4 == 0) {
 						#ifdef DEBUG
-						// send a log command for debug purpose
-						// -------------------------------------
-						commandRead = 0x026ff800;
+						u32 src = *(vu32*)(sharedAddr+2);
+						u32 dst = *(vu32*)(sharedAddr);
+						u32 len = *(vu32*)(sharedAddr+1);
+						u32 marker = *(vu32*)(sharedAddr+3);
 
-						sharedAddr[0] = dst;
-						sharedAddr[1] = len2;
-						sharedAddr[2] = buffer+src-sector;
-						sharedAddr[3] = commandRead;
+						dbg_printf("\ncard read received\n");
 
-						IPC_SendSync(0xEE24);
+						if(calledViaIPC) {
+							dbg_printf("\ntriggered via IPC\n");
+						}
+						dbg_printf("\nstr : \n");
+						dbg_hexa(cardStruct);
+						dbg_printf("\nsrc : \n");
+						dbg_hexa(src);
+						dbg_printf("\ndst : \n");
+						dbg_hexa(dst);
+						dbg_printf("\nlen : \n");
+						dbg_hexa(len);
+						dbg_printf("\nmarker : \n");
+						dbg_hexa(marker);
 
-						while(sharedAddr[3] != (vu32)0);
-						// -------------------------------------*/
+						dbg_printf("\nlog only \n");
 						#endif
 
 						// copy directly
@@ -452,19 +461,28 @@ void runCardEngineCheck (void) {
 						cardStruct[2] = len - len2;
 					} else {
 						#ifdef DEBUG
-						// send a log command for debug purpose
-						// -------------------------------------
-						commandRead = 0x026ff800;
+						u32 src = *(vu32*)(sharedAddr+2);
+						u32 dst = *(vu32*)(sharedAddr);
+						u32 len = *(vu32*)(sharedAddr+1);
+						u32 marker = *(vu32*)(sharedAddr+3);
 
-						sharedAddr[0] = page;
-						sharedAddr[1] = len2;
-						sharedAddr[2] = buffer+page-sector;
-						sharedAddr[3] = commandRead;
+						dbg_printf("\ncard read received\n");
 
-						IPC_SendSync(0xEE24);
+						if(calledViaIPC) {
+							dbg_printf("\ntriggered via IPC\n");
+						}
+						dbg_printf("\nstr : \n");
+						dbg_hexa(cardStruct);
+						dbg_printf("\nsrc : \n");
+						dbg_hexa(src);
+						dbg_printf("\ndst : \n");
+						dbg_hexa(dst);
+						dbg_printf("\nlen : \n");
+						dbg_hexa(len);
+						dbg_printf("\nmarker : \n");
+						dbg_hexa(marker);
 
-						while(sharedAddr[3] != (vu32)0);
-						// -------------------------------------*/
+						dbg_printf("\nlog only \n");
 						#endif
 
 						// read via the 512b ram cache
