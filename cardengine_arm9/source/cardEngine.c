@@ -32,7 +32,6 @@ extern vu32* volatile cardStruct;
 extern u32 sdk_version;
 extern u32 needFlushDCCache;
 vu32* volatile sharedAddr = (vu32*)0x027FFB08;
-vu32* volatile sharedAddr2 = (vu32*)0x027FFB0C;
 extern volatile int (*readCachedRef)(u32*); // this pointer is not at the end of the table but at the handler pointer corresponding to the current irq
 
 void user_exception(void);
@@ -84,8 +83,10 @@ int cardRead (u32* cacheStruct) {
 	sharedAddr[1] = len;
 	sharedAddr[2] = src;
 	sharedAddr[3] = commandRead;
-	sharedAddr2[0] = cacheBuffer;
-	sharedAddr2[1] = cachePage;
+	sharedAddr[4] = page;
+	sharedAddr[5] = sector;
+	sharedAddr[6] = cacheBuffer;
+	sharedAddr[7] = cachePage;
 
 	IPC_SendSync(0xEE24);
 

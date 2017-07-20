@@ -43,7 +43,6 @@ extern u32 saveCluster;
 extern u32 needFlushDCCache;
 extern u32 sdk_version;
 vu32* volatile sharedAddr = (vu32*)0x027FFB08;
-vu32* volatile sharedAddr2 = (vu32*)0x027FFB0C;
 extern volatile int (*readCachedRef)(u32*); // this pointer is not at the end of the table but at the handler pointer corresponding to the current irq
 static aFile romFile;
 static aFile savFile;
@@ -319,16 +318,16 @@ void runCardEngineCheck (void) {
 		{
 			accessCounter++;
 
-			u32* cacheBuffer = *(vu32*)(sharedAddr2);
-			u32* cachePage = *(vu32*)(sharedAddr2+1);
+			u32* cacheBuffer = *(vu32*)(sharedAddr+6);
+			u32* cachePage = *(vu32*)(sharedAddr+7);
 			u32 src = *(vu32*)(sharedAddr+2);
 			u32 dst = *(vu32*)(sharedAddr);
 			u32 len = *(vu32*)(sharedAddr+1);
 			u32 marker = *(vu32*)(sharedAddr+3);
 
-			u32 page = (src/512)*512;
+			u32 page = *(vu32*)(sharedAddr+4);
 
-			u32 sector = (src/READ_SIZE_ARM7)*READ_SIZE_ARM7;
+			u32 sector = *(vu32*)(sharedAddr+5);
 
 			if(page == src && len > READ_SIZE_ARM7 && dst < 0x02700000 && dst > 0x02000000 && ((u32)dst)%4==0) {
 				// read directly at arm7 level
